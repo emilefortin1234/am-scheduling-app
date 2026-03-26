@@ -1,8 +1,10 @@
 
+import io
 import random
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
+from openpyxl import Workbook
 
 st.set_page_config(page_title="Scheduling en fabrication additive", layout="wide")
 
@@ -360,6 +362,80 @@ def build_opl_dat(parts_df, machines_df, compat_df, materials_df, jn):
     )
 
 
+def build_excel_export(parts_df, machines_df, compat_df, materials_df, jn):
+    wb = Workbook()
+
+    ws = wb.active
+    ws.title = "Overview"
+    ws["A1"] = "AM Scheduling App - Export Excel"
+    ws["A3"] = "Paramètres globaux"
+    ws["A4"] = "Nombre de pièces"
+    ws["B4"] = len(parts_df)
+    ws["A5"] = "Nombre de machines"
+    ws["B5"] = len(machines_df)
+    ws["A6"] = "Nombre de matériaux"
+    ws["B6"] = len(materials_df)
+    ws["A7"] = "jn"
+    ws["B7"] = int(jn)
+
+    ws["D3"] = "Correspondance matériaux"
+    ws["D4"] = "material_id"
+    ws["E4"] = "material_name"
+    row_start = 5
+    for _, row in materials_df.iterrows():
+        ws[f"D{row_start}"] = int(row["material_id"])
+        ws[f"E{row_start}"] = row["material_name"]
+        row_start += 1
+
+    ws_mat = wb.create_sheet("Materials")
+    ws_mat.append(["material_id", "material_name"])
+    for _, row in materials_df.iterrows():
+        ws_mat.append([int(row["material_id"]), row["material_name"]])
+
+    ws_mach = wb.create_sheet("Machines")
+    ws_mach.append(["machine_id", "VT", "HT", "SET", "MA", "MH"])
+    for _, row in machines_df.iterrows():
+        ws_mach.append([
+            int(row["machine_id"]),
+            float(row["VT"]),
+            float(row["HT"]),
+            float(row["SET"]),
+            float(row["MA"]),
+            float(row["MH"]),
+        ])
+
+    ws_parts = wb.create_sheet("Parts")
+    ws_parts.append(["part_id", "h", "a", "v", "material_name"])
+    for _, row in parts_df.iterrows():
+        ws_parts.append([
+            int(row["part_id"]),
+            float(row["h"]),
+            float(row["a"]),
+            float(row["v"]),
+            row["material_name"],
+        ])
+
+    ws_comp = wb.create_sheet("Compatibility")
+    comp_headers = ["machine"] + list(compat_df.columns)
+    ws_comp.append(comp_headers)
+    for idx, row in compat_df.iterrows():
+        ws_comp.append([idx] + [int(x) for x in row.tolist()])
+
+    for ws_current in [ws, ws_mat, ws_mach, ws_parts, ws_comp]:
+        for col in ws_current.columns:
+            max_len = 0
+            col_letter = col[0].column_letter
+            for cell in col:
+                val = "" if cell.value is None else str(cell.value)
+                max_len = max(max_len, len(val))
+            ws_current.column_dimensions[col_letter].width = min(max_len + 2, 25)
+
+    output = io.BytesIO()
+    wb.save(output)
+    output.seek(0)
+    return output
+
+
 def style_figure(fig, title, x_title, y_title, height):
     fig.update_layout(
         title=dict(text=title, font=dict(color="#111111", size=20)),
@@ -674,13 +750,29 @@ dat_text = build_opl_dat(
     int(st.session_state.jn),
 )
 
-c_download, c_run = st.columns([1, 1])
-with c_download:
+excel_file = build_excel_export(
+    st.session_state.parts_df,
+    st.session_state.machines_df,
+    st.session_state.compat_df,
+    st.session_state.materials_df,
+    int(st.session_state.jn),
+)
+
+c_download1, c_download2, c_run = st.columns([1, 1, 1])
+with c_download1:
     st.download_button(
         "Télécharger le fichier .dat OPL",
         data=dat_text,
         file_name="ParallelNonIdentical_generated.dat",
         mime="text/plain",
+        use_container_width=True,
+    )
+with c_download2:
+    st.download_button(
+        "Télécharger le fichier Excel",
+        data=excel_file,
+        file_name="am_scheduling_export.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         use_container_width=True,
     )
 with c_run:
@@ -739,6 +831,6 @@ Cette application permet de :
 - construire un planning heuristique ;
 - visualiser le planning global et la composition détaillée de chaque batch ;
 - ajouter des graphiques complémentaires sur la charge des machines et la répartition des matériaux ;
-- exporter les données en fichier `.dat` pour OPL.
+- exporter les données en fichier `.dat` pour OPL et en fichier Excel.
         """
     )
